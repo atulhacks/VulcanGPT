@@ -17,11 +17,32 @@
 
 ---
 
+## 🤖 Get Your Paid API Key Free Here :
+
+<div align="center">
+    <a href="https://discord.gg/fR35HeHD">
+    <img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord">
+  </a>
+  <a href="https://keybase.io/atulhack">
+    <img src="https://img.shields.io/badge/Keybase-33A0FF?style=for-the-badge&logo=keybase&logoColor=white" alt="Keybase">
+  </a>
+  <a href="https://instagram.com/instagram">
+    <img src="https://img.shields.io/badge/Instagram-E4405F?style=for-the-badge&logo=instagram&logoColor=white" alt="Instagram">
+  </a>
+  <a href="https://t.me/atulhack">
+    <img src="https://img.shields.io/badge/Telegram-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Telegram">
+  </a>
+
+  
+</div>
+
+---
+
 ## 🚀 Showcase
 
 Vulcan GPT provides a powerful CLI interface for interacting with advanced language models.
 
-![Vulcan GPT Demo Screenshot](img/demo.png)
+![Vulcan GPT Demo Screenshot](/Vulcan-GPT/img/demo.png)
 
 ---
 
