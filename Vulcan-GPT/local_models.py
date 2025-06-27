@@ -1,23 +1,18 @@
 # -*- coding: utf-8 -*-
-import os
-import sys
-import time
 import json
+import os
 import shutil
+import sys
 import threading
-import requests
+import time
 from pathlib import Path
+
+import requests
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import (BarColumn, DownloadColumn, Progress, TextColumn,
+                           TimeRemainingColumn, TransferSpeedColumn)
 from rich.text import Text
-from rich.progress import (
-    Progress,
-    BarColumn,
-    TextColumn,
-    DownloadColumn,
-    TransferSpeedColumn,
-    TimeRemainingColumn,
-)
 
 
 class LocalModelManager:
