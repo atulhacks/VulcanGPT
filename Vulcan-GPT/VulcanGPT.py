@@ -53,8 +53,9 @@ except ImportError:
     )
     if " " in pip_executable:
         pip_executable = f'"{pip_executable}"'
-    import subprocess
-    subprocess.run(
+    import subprocess  # nosec B404
+
+    subprocess.run(  # nosec B603
         [
             pip_executable,
             "install",
@@ -168,12 +169,12 @@ class UI:
         self.console = Console()
 
     def clear_screen(self):
-        import subprocess
+        import subprocess  # nosec B404
 
         if os.name == "nt":
-            subprocess.run(["cmd", "/c", "cls"], check=False)
+            subprocess.run(["cmd", "/c", "cls"], check=False)  # nosec B603 B607
         else:
-            subprocess.run(["clear"], check=False)
+            subprocess.run(["clear"], check=False)  # nosec B603 B607
 
     def display_banner(self):
         self.clear_screen()
