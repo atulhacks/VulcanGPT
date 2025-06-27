@@ -1,27 +1,28 @@
 # -*- coding: utf-8 -*-
-import os
-import sys
-import re
-import time
-import json
-import urllib.request
-import urllib.parse
 import base64
 import hashlib
-import threading
-import webbrowser
+import json
+import os
+import re
 import socket
+import sys
+import threading
+import time
+import urllib.parse
+import urllib.request
 import uuid
+import webbrowser
 from datetime import datetime, timedelta
 from pathlib import Path
+
 from rich.console import Console
-from rich.panel import Panel
-from rich.markdown import Markdown
-from rich.text import Text
 from rich.live import Live
-from rich.table import Table
+from rich.markdown import Markdown
+from rich.panel import Panel
 from rich.progress import Progress
 from rich.prompt import Confirm
+from rich.table import Table
+from rich.text import Text
 
 
 try:
@@ -42,10 +43,10 @@ except ImportError:
 
 # --- Dependency Management ---
 try:
-    import openai
     import colorama
-    from pwinput import pwinput
+    import openai
     from dotenv import load_dotenv, set_key
+    from pwinput import pwinput
 except ImportError:
     print("One or more required packages are not installed. Installing dependencies...")
     pip_executable = sys.executable.replace("pythonw.exe", "python.exe").replace(
