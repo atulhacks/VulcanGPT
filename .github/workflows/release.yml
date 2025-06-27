@@ -1,243 +1,333 @@
-name: 🚀 Build and Release VulcanGPT
+name: Automated Release
 
 on:
   push:
     tags:
-      - 'v*.*.*'  # Triggers on version tags like v1.0.0, v2.1.3, etc.
-  workflow_dispatch:  # Allows manual triggering
+      - 'v*'
+  workflow_dispatch:
     inputs:
       version:
         description: 'Release version (e.g., v1.0.0)'
         required: true
-        default: 'v1.0.0'
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
 
 env:
   PYTHON_VERSION: '3.9'
 
 jobs:
-  create-release:
-    name: 📝 Create Release
+  security-scan:
+    name: Security Scan
     runs-on: ubuntu-latest
-    outputs:
-      release_id: ${{ steps.create_release.outputs.id }}
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
-      version: ${{ steps.get_version.outputs.version }}
     steps:
-      - name: 📥 Checkout Repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install security tools
+        run: |
+          pip install bandit safety
+
+      - name: Run Bandit security scan
+        run: |
+          bandit -r Vulcan-GPT/ -f json -o bandit-report.json || true
+          bandit -r Vulcan-GPT/ -f txt
+
+      - name: Check for high/medium severity issues
+        run: |
+          python -c "
+          import json
+          with open('bandit-report.json', 'r') as f:
+              report = json.load(f)
+          
+          high_issues = report['metrics']['_totals']['SEVERITY.HIGH']
+          medium_issues = report['metrics']['_totals']['SEVERITY.MEDIUM']
+          
+          print(f'High severity issues: {high_issues}')
+          print(f'Medium severity issues: {medium_issues}')
+          
+          if high_issues > 0 or medium_issues > 0:
+              print('❌ Security scan failed: High or medium severity issues found')
+              exit(1)
+          else:
+              print('✅ Security scan passed: No high or medium severity issues')
+          "
+
+      - name: Upload security report
+        uses: actions/upload-artifact@v3
+        with:
+          name: security-report
+          path: bandit-report.json
+
+  code-quality:
+    name: Code Quality Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install flake8 black isort
+
+      - name: Check code formatting with Black
+        run: |
+          black --check --diff Vulcan-GPT/
+
+      - name: Check import sorting with isort
+        run: |
+          isort --check-only --diff Vulcan-GPT/
+
+      - name: Lint with flake8
+        run: |
+          flake8 Vulcan-GPT/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 Vulcan-GPT/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+  test:
+    name: Run Tests
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Vulcan-GPT/requirements.txt
+
+      - name: Test import and basic functionality
+        run: |
+          python -c "
+          import sys
+          sys.path.append('Vulcan-GPT')
+          
+          # Test imports
+          try:
+              import VulcanGPT
+              print('✅ Main module imports successfully')
+          except Exception as e:
+              print(f'❌ Main module import failed: {e}')
+              sys.exit(1)
+          
+          try:
+              import local_models
+              print('✅ Local models module imports successfully')
+          except Exception as e:
+              print(f'❌ Local models import failed: {e}')
+              sys.exit(1)
+          
+          print('✅ All basic tests passed')
+          "
+
+  build:
+    name: Build Release Assets
+    runs-on: ${{ matrix.os }}
+    needs: [security-scan, code-quality, test]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build dependencies
+        run: |
+          pip install pyinstaller
+
+      - name: Install project dependencies
+        run: |
+          pip install -r Vulcan-GPT/requirements.txt
+
+      - name: Build executable (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd Vulcan-GPT
+          pyinstaller --onefile --name VulcanGPT-windows --add-data "prompts;prompts" --add-data "img;img" VulcanGPT.py
+
+      - name: Build executable (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd Vulcan-GPT
+          pyinstaller --onefile --name VulcanGPT-linux --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
+
+      - name: Build executable (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd Vulcan-GPT
+          pyinstaller --onefile --name VulcanGPT-macos --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
+
+      - name: Create source archive
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          tar -czf VulcanGPT-source.tar.gz Vulcan-GPT/ VulcanGPT-Web/ *.md *.bat *.sh
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: build-${{ matrix.os }}
+          path: |
+            Vulcan-GPT/dist/
+            VulcanGPT-source.tar.gz
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: 🏷️ Get Version
-        id: get_version
+      - name: Download all artifacts
+        uses: actions/download-artifact@v3
+
+      - name: Get version
+        id: version
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
           else
-            VERSION=${GITHUB_REF#refs/tags/}
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
 
-      - name: 📋 Generate Changelog
+      - name: Generate changelog
         id: changelog
         run: |
-          # Get the latest tag before this one
-          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          # Get the latest tag (excluding the current one if it exists)
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "${{ steps.version.outputs.version }}" | head -n 1)
           
           if [ -z "$PREVIOUS_TAG" ]; then
-            # First release
-            CHANGELOG=$(git log --pretty=format:"- %s" --reverse)
+            echo "## What's New" > CHANGELOG.md
+            echo "This is the first release of VulcanGPT!" >> CHANGELOG.md
           else
-            # Get commits since last tag
-            CHANGELOG=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s" --reverse)
+            echo "## What's New" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            git log --pretty=format:"- %s" $PREVIOUS_TAG..HEAD >> CHANGELOG.md
           fi
           
-          # Create changelog file
-          cat > CHANGELOG.md << EOF
-          ## 🎉 What's New in ${{ steps.get_version.outputs.version }}
-          
-          ### 🚀 Features & Improvements
-          $CHANGELOG
-          
-          ### 📦 Downloads
-          - **Windows**: Download \`VulcanGPT-${{ steps.get_version.outputs.version }}-Windows.exe\`
-          - **Linux**: Download \`VulcanGPT-${{ steps.get_version.outputs.version }}-Linux\`
-          - **macOS**: Download \`VulcanGPT-${{ steps.get_version.outputs.version }}-macOS\`
-          
-          ### 🔧 Installation
-          1. Download the appropriate executable for your operating system
-          2. Double-click to run (no installation required!)
-          3. VulcanGPT will start immediately with all features available
-          
-          ### ⚡ Quick Start
-          - First-time users: The application will guide you through API key setup
-          - Existing users: Your settings and prompts are preserved
-          - Local models: Download and use AI models without API keys
-          
-          ---
-          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${{ steps.get_version.outputs.version }}
-          EOF
+          echo "" >> CHANGELOG.md
+          echo "## Security" >> CHANGELOG.md
+          echo "✅ All security scans passed" >> CHANGELOG.md
+          echo "✅ No high or medium severity vulnerabilities" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "## Compatibility" >> CHANGELOG.md
+          echo "- Python 3.8+" >> CHANGELOG.md
+          echo "- Windows, macOS, Linux" >> CHANGELOG.md
+          echo "- Standalone executables available" >> CHANGELOG.md
 
-      - name: 🎯 Create Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          
+          # Copy executables
+          cp build-windows-latest/Vulcan-GPT/dist/* release-assets/ 2>/dev/null || true
+          cp build-ubuntu-latest/Vulcan-GPT/dist/* release-assets/ 2>/dev/null || true
+          cp build-macos-latest/Vulcan-GPT/dist/* release-assets/ 2>/dev/null || true
+          
+          # Copy source archive
+          cp build-ubuntu-latest/VulcanGPT-source.tar.gz release-assets/ 2>/dev/null || true
+          
+          # Create checksums
+          cd release-assets
+          for file in *; do
+            if [ -f "$file" ]; then
+              sha256sum "$file" >> checksums.txt
+            fi
+          done
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
         with:
-          tag_name: ${{ steps.get_version.outputs.version }}
-          release_name: VulcanGPT ${{ steps.get_version.outputs.version }}
+          tag_name: ${{ steps.version.outputs.version }}
+          name: VulcanGPT ${{ steps.version.outputs.version }}
           body_path: CHANGELOG.md
-          draft: false
-          prerelease: ${{ contains(steps.get_version.outputs.version, 'alpha') || contains(steps.get_version.outputs.version, 'beta') || contains(steps.get_version.outputs.version, 'rc') }}
-
-  build-executables:
-    name: 🏗️ Build Executables
-    needs: create-release
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: windows-latest
-            executable_name: VulcanGPT.exe
-            asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-Windows.exe
-            build_command: pyinstaller --onefile --name="VulcanGPT" --icon="Vulcan-GPT/img/logo.ico" --add-data "Vulcan-GPT/prompts;prompts" --add-data "Vulcan-GPT/img;img" --hidden-import="llama_cpp" --hidden-import="cryptography" --hidden-import="requests" --hidden-import="openai" --hidden-import="rich" --hidden-import="colorama" --hidden-import="pwinput" --hidden-import="python-dotenv" Vulcan-GPT/VulcanGPT.py
-          
-          - os: ubuntu-latest
-            executable_name: VulcanGPT
-            asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-Linux
-            build_command: pyinstaller --onefile --name="VulcanGPT" --add-data "Vulcan-GPT/prompts:prompts" --add-data "Vulcan-GPT/img:img" --hidden-import="llama_cpp" --hidden-import="cryptography" --hidden-import="requests" --hidden-import="openai" --hidden-import="rich" --hidden-import="colorama" --hidden-import="pwinput" --hidden-import="python-dotenv" Vulcan-GPT/VulcanGPT.py
-          
-          - os: macos-latest
-            executable_name: VulcanGPT
-            asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-macOS
-            build_command: pyinstaller --onefile --name="VulcanGPT" --add-data "Vulcan-GPT/prompts:prompts" --add-data "Vulcan-GPT/img:img" --hidden-import="llama_cpp" --hidden-import="cryptography" --hidden-import="requests" --hidden-import="openai" --hidden-import="rich" --hidden-import="colorama" --hidden-import="pwinput" --hidden-import="python-dotenv" Vulcan-GPT/VulcanGPT.py
-
-    steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: 📦 Install Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r Vulcan-GPT/requirements.txt
-          pip install pyinstaller
-
-      - name: 🔧 Prepare Build Environment
-        run: |
-          # Create icon file for Windows if it doesn't exist
-          if [ "${{ matrix.os }}" = "windows-latest" ] && [ ! -f "Vulcan-GPT/img/logo.ico" ]; then
-            echo "Creating placeholder icon..."
-            # Create a simple placeholder icon (you can replace this with actual icon creation)
-            mkdir -p Vulcan-GPT/img
-            touch Vulcan-GPT/img/logo.ico
-          fi
-
-      - name: 🏗️ Build Executable
-        run: ${{ matrix.build_command }}
-
-      - name: 📝 Verify Build
-        run: |
-          if [ -f "dist/${{ matrix.executable_name }}" ]; then
-            echo "✅ Build successful: dist/${{ matrix.executable_name }}"
-            ls -la dist/
-          else
-            echo "❌ Build failed: executable not found"
-            exit 1
-          fi
-
-      - name: 🧪 Test Executable
-        run: |
-          # Basic test to ensure executable runs
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            # Windows testing (limited in CI)
-            echo "Windows executable created successfully"
-          else
-            # Unix-like systems
-            chmod +x dist/${{ matrix.executable_name }}
-            timeout 10s dist/${{ matrix.executable_name }} --help || echo "Executable test completed"
-          fi
-
-      - name: 📤 Upload Release Asset
-        uses: actions/upload-release-asset@v1
+          files: release-assets/*
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: dist/${{ matrix.executable_name }}
-          asset_name: ${{ matrix.asset_name }}
-          asset_content_type: application/octet-stream
 
-  build-source:
-    name: 📦 Build Source Distribution
-    needs: create-release
+  notify:
+    name: Post-Release Notifications
     runs-on: ubuntu-latest
+    needs: [create-release]
+    if: always()
+    
     steps:
-      - name: 📥 Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: 🐍 Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: 📦 Create Source Archive
+      - name: Notify on success
+        if: needs.create-release.result == 'success'
         run: |
-          # Create a clean source distribution
-          mkdir -p dist
-          
-          # Create tar.gz archive
-          tar --exclude='.git' --exclude='dist' --exclude='build' --exclude='*.pyc' --exclude='__pycache__' --exclude='.github' -czf dist/VulcanGPT-${{ needs.create-release.outputs.version }}-Source.tar.gz .
-          
-          # Create zip archive
-          zip -r dist/VulcanGPT-${{ needs.create-release.outputs.version }}-Source.zip . -x ".git/*" "dist/*" "build/*" "*.pyc" "__pycache__/*" ".github/*"
+          echo "🎉 Release ${{ needs.create-release.outputs.version || github.ref_name }} created successfully!"
+          echo "📦 Assets built for Windows, macOS, and Linux"
+          echo "🔒 Security scans passed"
+          echo "✅ All tests passed"
 
-      - name: 📤 Upload Source Archives
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: dist/VulcanGPT-${{ needs.create-release.outputs.version }}-Source.tar.gz
-          asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-Source.tar.gz
-          asset_content_type: application/gzip
+      - name: Notify on failure
+        if: needs.create-release.result == 'failure'
+        run: |
+          echo "❌ Release failed!"
+          echo "Please check the workflow logs for details."
+          exit 1
 
-      - name: 📤 Upload Source ZIP
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: dist/VulcanGPT-${{ needs.create-release.outputs.version }}-Source.zip
-          asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-Source.zip
-          asset_content_type: application/zip
-
-  post-release:
-    name: 🎉 Post-Release Tasks
-    needs: [create-release, build-executables, build-source]
+  update-docs:
+    name: Update Documentation
     runs-on: ubuntu-latest
+    needs: [create-release]
+    if: needs.create-release.result == 'success'
+    
     steps:
-      - name: 📥 Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 🎊 Release Notification
+      - name: Update README with latest release
         run: |
-          echo "🎉 VulcanGPT ${{ needs.create-release.outputs.version }} has been released!"
-          echo "📦 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.create-release.outputs.version }}"
-          echo "🔗 Direct download links:"
-          echo "  - Windows: https://github.com/${{ github.repository }}/releases/download/${{ needs.create-release.outputs.version }}/VulcanGPT-${{ needs.create-release.outputs.version }}-Windows.exe"
-          echo "  - Linux: https://github.com/${{ github.repository }}/releases/download/${{ needs.create-release.outputs.version }}/VulcanGPT-${{ needs.create-release.outputs.version }}-Linux"
-          echo "  - macOS: https://github.com/${{ github.repository }}/releases/download/${{ needs.create-release.outputs.version }}/VulcanGPT-${{ needs.create-release.outputs.version }}-macOS"
+          VERSION="${{ needs.create-release.outputs.version || github.ref_name }}"
+          
+          # Update download links in README
+          sed -i "s/releases\/download\/v[0-9]\+\.[0-9]\+\.[0-9]\+/releases\/download\/$VERSION/g" README.md
+          
+          # Update version badge
+          sed -i "s/release-v[0-9]\+\.[0-9]\+\.[0-9]\+-/release-$VERSION-/g" README.md
 
-      - name: 📊 Update README Badge
+      - name: Commit documentation updates
         run: |
-          # Update version badge in README.md
-          if [ -f README.md ]; then
-            sed -i 's/Version-[0-9]\+\.[0-9]\+\.[0-9]\+-red/Version-${{ needs.create-release.outputs.version }}-red/g' README.md
-            echo "✅ Updated version badge in README.md"
-          fi
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add README.md
+          git diff --staged --quiet || git commit -m "docs: update README with release ${{ needs.create-release.outputs.version || github.ref_name }}"
+          git push
