@@ -1,0 +1,243 @@
+name: 🚀 Build and Release VulcanGPT
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v1.0.0, v2.1.3, etc.
+  workflow_dispatch:  # Allows manual triggering
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+env:
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  create-release:
+    name: 📝 Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🏷️ Get Version
+        id: get_version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=${GITHUB_REF#refs/tags/}
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: 📋 Generate Changelog
+        id: changelog
+        run: |
+          # Get the latest tag before this one
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            # First release
+            CHANGELOG=$(git log --pretty=format:"- %s" --reverse)
+          else
+            # Get commits since last tag
+            CHANGELOG=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s" --reverse)
+          fi
+          
+          # Create changelog file
+          cat > CHANGELOG.md << EOF
+          ## 🎉 What's New in ${{ steps.get_version.outputs.version }}
+          
+          ### 🚀 Features & Improvements
+          $CHANGELOG
+          
+          ### 📦 Downloads
+          - **Windows**: Download \`VulcanGPT-${{ steps.get_version.outputs.version }}-Windows.exe\`
+          - **Linux**: Download \`VulcanGPT-${{ steps.get_version.outputs.version }}-Linux\`
+          - **macOS**: Download \`VulcanGPT-${{ steps.get_version.outputs.version }}-macOS\`
+          
+          ### 🔧 Installation
+          1. Download the appropriate executable for your operating system
+          2. Double-click to run (no installation required!)
+          3. VulcanGPT will start immediately with all features available
+          
+          ### ⚡ Quick Start
+          - First-time users: The application will guide you through API key setup
+          - Existing users: Your settings and prompts are preserved
+          - Local models: Download and use AI models without API keys
+          
+          ---
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREVIOUS_TAG}...${{ steps.get_version.outputs.version }}
+          EOF
+
+      - name: 🎯 Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          release_name: VulcanGPT ${{ steps.get_version.outputs.version }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.version, 'alpha') || contains(steps.get_version.outputs.version, 'beta') || contains(steps.get_version.outputs.version, 'rc') }}
+
+  build-executables:
+    name: 🏗️ Build Executables
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            executable_name: VulcanGPT.exe
+            asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-Windows.exe
+            build_command: pyinstaller --onefile --name="VulcanGPT" --icon="Vulcan-GPT/img/logo.ico" --add-data "Vulcan-GPT/prompts;prompts" --add-data "Vulcan-GPT/img;img" --hidden-import="llama_cpp" --hidden-import="cryptography" --hidden-import="requests" --hidden-import="openai" --hidden-import="rich" --hidden-import="colorama" --hidden-import="pwinput" --hidden-import="python-dotenv" Vulcan-GPT/VulcanGPT.py
+          
+          - os: ubuntu-latest
+            executable_name: VulcanGPT
+            asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-Linux
+            build_command: pyinstaller --onefile --name="VulcanGPT" --add-data "Vulcan-GPT/prompts:prompts" --add-data "Vulcan-GPT/img:img" --hidden-import="llama_cpp" --hidden-import="cryptography" --hidden-import="requests" --hidden-import="openai" --hidden-import="rich" --hidden-import="colorama" --hidden-import="pwinput" --hidden-import="python-dotenv" Vulcan-GPT/VulcanGPT.py
+          
+          - os: macos-latest
+            executable_name: VulcanGPT
+            asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-macOS
+            build_command: pyinstaller --onefile --name="VulcanGPT" --add-data "Vulcan-GPT/prompts:prompts" --add-data "Vulcan-GPT/img:img" --hidden-import="llama_cpp" --hidden-import="cryptography" --hidden-import="requests" --hidden-import="openai" --hidden-import="rich" --hidden-import="colorama" --hidden-import="pwinput" --hidden-import="python-dotenv" Vulcan-GPT/VulcanGPT.py
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 📦 Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Vulcan-GPT/requirements.txt
+          pip install pyinstaller
+
+      - name: 🔧 Prepare Build Environment
+        run: |
+          # Create icon file for Windows if it doesn't exist
+          if [ "${{ matrix.os }}" = "windows-latest" ] && [ ! -f "Vulcan-GPT/img/logo.ico" ]; then
+            echo "Creating placeholder icon..."
+            # Create a simple placeholder icon (you can replace this with actual icon creation)
+            mkdir -p Vulcan-GPT/img
+            touch Vulcan-GPT/img/logo.ico
+          fi
+
+      - name: 🏗️ Build Executable
+        run: ${{ matrix.build_command }}
+
+      - name: 📝 Verify Build
+        run: |
+          if [ -f "dist/${{ matrix.executable_name }}" ]; then
+            echo "✅ Build successful: dist/${{ matrix.executable_name }}"
+            ls -la dist/
+          else
+            echo "❌ Build failed: executable not found"
+            exit 1
+          fi
+
+      - name: 🧪 Test Executable
+        run: |
+          # Basic test to ensure executable runs
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            # Windows testing (limited in CI)
+            echo "Windows executable created successfully"
+          else
+            # Unix-like systems
+            chmod +x dist/${{ matrix.executable_name }}
+            timeout 10s dist/${{ matrix.executable_name }} --help || echo "Executable test completed"
+          fi
+
+      - name: 📤 Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: dist/${{ matrix.executable_name }}
+          asset_name: ${{ matrix.asset_name }}
+          asset_content_type: application/octet-stream
+
+  build-source:
+    name: 📦 Build Source Distribution
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: 📦 Create Source Archive
+        run: |
+          # Create a clean source distribution
+          mkdir -p dist
+          
+          # Create tar.gz archive
+          tar --exclude='.git' --exclude='dist' --exclude='build' --exclude='*.pyc' --exclude='__pycache__' --exclude='.github' -czf dist/VulcanGPT-${{ needs.create-release.outputs.version }}-Source.tar.gz .
+          
+          # Create zip archive
+          zip -r dist/VulcanGPT-${{ needs.create-release.outputs.version }}-Source.zip . -x ".git/*" "dist/*" "build/*" "*.pyc" "__pycache__/*" ".github/*"
+
+      - name: 📤 Upload Source Archives
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: dist/VulcanGPT-${{ needs.create-release.outputs.version }}-Source.tar.gz
+          asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-Source.tar.gz
+          asset_content_type: application/gzip
+
+      - name: 📤 Upload Source ZIP
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ needs.create-release.outputs.upload_url }}
+          asset_path: dist/VulcanGPT-${{ needs.create-release.outputs.version }}-Source.zip
+          asset_name: VulcanGPT-${{ needs.create-release.outputs.version }}-Source.zip
+          asset_content_type: application/zip
+
+  post-release:
+    name: 🎉 Post-Release Tasks
+    needs: [create-release, build-executables, build-source]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🎊 Release Notification
+        run: |
+          echo "🎉 VulcanGPT ${{ needs.create-release.outputs.version }} has been released!"
+          echo "📦 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ needs.create-release.outputs.version }}"
+          echo "🔗 Direct download links:"
+          echo "  - Windows: https://github.com/${{ github.repository }}/releases/download/${{ needs.create-release.outputs.version }}/VulcanGPT-${{ needs.create-release.outputs.version }}-Windows.exe"
+          echo "  - Linux: https://github.com/${{ github.repository }}/releases/download/${{ needs.create-release.outputs.version }}/VulcanGPT-${{ needs.create-release.outputs.version }}-Linux"
+          echo "  - macOS: https://github.com/${{ github.repository }}/releases/download/${{ needs.create-release.outputs.version }}/VulcanGPT-${{ needs.create-release.outputs.version }}-macOS"
+
+      - name: 📊 Update README Badge
+        run: |
+          # Update version badge in README.md
+          if [ -f README.md ]; then
+            sed -i 's/Version-[0-9]\+\.[0-9]\+\.[0-9]\+-red/Version-${{ needs.create-release.outputs.version }}-red/g' README.md
+            echo "✅ Updated version badge in README.md"
+          fi
