@@ -111,10 +111,10 @@ jobs:
           audit_vulns = reports.get('pip_audit', {}).get('vulnerabilities', 0)
           
           if high_issues > 0 or medium_issues > 0 or safety_vulns > 0 or audit_vulns > 0:
-              summary += '❌ **SECURITY ISSUES DETECTED** - Immediate attention required'
+              summary += 'FAILED **SECURITY ISSUES DETECTED** - Immediate attention required'
               exit_code = 1
           else:
-              summary += '✅ **ALL SECURITY CHECKS PASSED** - No critical issues found'
+              summary += 'PASSED **ALL SECURITY CHECKS PASSED** - No critical issues found'
               exit_code = 0
           
           with open('security-summary.md', 'w') as f:
@@ -252,12 +252,12 @@ jobs:
                   })
           
           if problematic_licenses:
-              print('❌ Problematic licenses found:')
+              print('FAILED Problematic licenses found:')
               for pkg in problematic_licenses:
                   print(f'  - {pkg[\"name\"]} ({pkg[\"version\"]}): {pkg[\"license\"]}')
               exit(1)
           else:
-              print('✅ All licenses are compliant')
+              print('PASSED All licenses are compliant')
           "
 
       - name: Upload license report
@@ -288,10 +288,10 @@ jobs:
           if [[ "${{ needs.dependency-scan.result }}" == "success" && 
                 "${{ needs.codeql-analysis.result }}" == "success" && 
                 "${{ needs.license-check.result }}" == "success" ]]; then
-            echo "## Overall Status: ✅ PASSED" >> final-report.md
+            echo "## Overall Status: PASSED" >> final-report.md
             echo "All security checks completed successfully." >> final-report.md
           else
-            echo "## Overall Status: ❌ FAILED" >> final-report.md
+            echo "## Overall Status: FAILED" >> final-report.md
             echo "One or more security checks failed. Please review the individual job results." >> final-report.md
           fi
           
