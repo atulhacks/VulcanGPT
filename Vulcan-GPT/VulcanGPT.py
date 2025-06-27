@@ -54,10 +54,18 @@ except ImportError:
     if " " in pip_executable:
         pip_executable = f'"{pip_executable}"'
     import subprocess
-    subprocess.run([
-        pip_executable, "install", "openai", "colorama>=0.4.6", 
-        "pwinput>=1.0.3", "python-dotenv>=1.0.0", "rich>=12.0.0"
-    ], check=True)
+    subprocess.run(
+        [
+            pip_executable,
+            "install",
+            "openai",
+            "colorama>=0.4.6",
+            "pwinput>=1.0.3",
+            "python-dotenv>=1.0.0",
+            "rich>=12.0.0",
+        ],
+        check=True,
+    )
     print("\nDependencies installed. Please restart the script.")
     sys.exit(0)
 
@@ -161,6 +169,7 @@ class UI:
 
     def clear_screen(self):
         import subprocess
+
         if os.name == "nt":
             subprocess.run(["cmd", "/c", "cls"], check=False)
         else:
@@ -1115,7 +1124,9 @@ Provide your analysis in markdown format with appropriate headings and sections.
                 "Accept": "application/vnd.github.v3+json",
             }
 
-            response = requests.get("https://api.github.com/user", headers=headers, timeout=30)
+            response = requests.get(
+                "https://api.github.com/user", headers=headers, timeout=30
+            )
 
             if response.status_code == 200:
                 return True
@@ -1679,7 +1690,9 @@ class WebSearch:
 
                 params = {"q": query, **self.search_params}
 
-                response = requests.get(self.api_url, headers=headers, params=params, timeout=30)
+                response = requests.get(
+                    self.api_url, headers=headers, params=params, timeout=30
+                )
 
                 if response.status_code == 200:
                     data = response.json()
