@@ -36,7 +36,7 @@ jobs:
           safety check --file Vulcan-GPT/requirements.txt
 
       - name: Upload security report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: security-report
@@ -178,7 +178,7 @@ jobs:
           pip-audit --requirement Vulcan-GPT/requirements.txt
 
       - name: Upload audit report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: dependency-audit
