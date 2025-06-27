@@ -59,7 +59,7 @@ class LocalModelManager:
                     try:
                         with open(metadata_path, "r") as f:
                             metadata = json.load(f)
-                    except:
+                    except (json.JSONDecodeError, FileNotFoundError, PermissionError):
                         pass
 
                 self.available_models[model_name] = {
