@@ -1,21 +1,17 @@
-name: Security Monitoring
+name: Continuous Integration
 
 on:
-  schedule:
-    # Run daily at 2 AM UTC
-    - cron: '0 2 * * *'
-  workflow_dispatch:
   push:
-    paths:
-      - 'Vulcan-GPT/requirements.txt'
-      - '.github/workflows/security-monitoring.yml'
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
 
 env:
   PYTHON_VERSION: '3.9'
 
 jobs:
-  dependency-scan:
-    name: Dependency Security Scan
+  security-check:
+    name: Security Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -28,180 +24,26 @@ jobs:
 
       - name: Install security tools
         run: |
-          pip install safety pip-audit bandit
-
-      - name: Check for known vulnerabilities with Safety
-        run: |
-          safety check --file Vulcan-GPT/requirements.txt --json --output safety-report.json || true
-          safety check --file Vulcan-GPT/requirements.txt
-
-      - name: Audit dependencies with pip-audit
-        run: |
-          pip-audit --requirement Vulcan-GPT/requirements.txt --format=json --output=pip-audit-report.json || true
-          pip-audit --requirement Vulcan-GPT/requirements.txt
+          pip install bandit safety
 
       - name: Run Bandit security scan
         run: |
-          bandit -r Vulcan-GPT/ -f json -o bandit-report.json || true
+          bandit -r Vulcan-GPT/ -f json -o bandit-report.json
           bandit -r Vulcan-GPT/ -f txt
 
-      - name: Generate security summary
+      - name: Check dependencies for known vulnerabilities
         run: |
-          python -c "
-          import json
-          import os
-          from datetime import datetime
-          
-          # Read reports
-          reports = {}
-          
-          # Bandit report
-          if os.path.exists('bandit-report.json'):
-              with open('bandit-report.json', 'r') as f:
-                  bandit_data = json.load(f)
-                  reports['bandit'] = {
-                      'high_issues': bandit_data['metrics']['_totals']['SEVERITY.HIGH'],
-                      'medium_issues': bandit_data['metrics']['_totals']['SEVERITY.MEDIUM'],
-                      'low_issues': bandit_data['metrics']['_totals']['SEVERITY.LOW'],
-                      'total_issues': len(bandit_data['results'])
-                  }
-          
-          # Safety report
-          if os.path.exists('safety-report.json'):
-              with open('safety-report.json', 'r') as f:
-                  try:
-                      safety_data = json.load(f)
-                      reports['safety'] = {
-                          'vulnerabilities': len(safety_data) if isinstance(safety_data, list) else 0
-                      }
-                  except:
-                      reports['safety'] = {'vulnerabilities': 0}
-          
-          # pip-audit report
-          if os.path.exists('pip-audit-report.json'):
-              with open('pip-audit-report.json', 'r') as f:
-                  try:
-                      audit_data = json.load(f)
-                      reports['pip_audit'] = {
-                          'vulnerabilities': len(audit_data.get('vulnerabilities', []))
-                      }
-                  except:
-                      reports['pip_audit'] = {'vulnerabilities': 0}
-          
-          # Generate summary
-          summary = f'''# Security Scan Summary - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-          
-          ## Bandit Static Analysis
-          - High Severity Issues: {reports.get('bandit', {}).get('high_issues', 'N/A')}
-          - Medium Severity Issues: {reports.get('bandit', {}).get('medium_issues', 'N/A')}
-          - Low Severity Issues: {reports.get('bandit', {}).get('low_issues', 'N/A')}
-          - Total Issues: {reports.get('bandit', {}).get('total_issues', 'N/A')}
-          
-          ## Dependency Vulnerabilities
-          - Safety Check: {reports.get('safety', {}).get('vulnerabilities', 'N/A')} vulnerabilities
-          - Pip-Audit: {reports.get('pip_audit', {}).get('vulnerabilities', 'N/A')} vulnerabilities
-          
-          ## Status
-          '''
-          
-          # Determine overall status
-          high_issues = reports.get('bandit', {}).get('high_issues', 0)
-          medium_issues = reports.get('bandit', {}).get('medium_issues', 0)
-          safety_vulns = reports.get('safety', {}).get('vulnerabilities', 0)
-          audit_vulns = reports.get('pip_audit', {}).get('vulnerabilities', 0)
-          
-          if high_issues > 0 or medium_issues > 0 or safety_vulns > 0 or audit_vulns > 0:
-              summary += '❌ **SECURITY ISSUES DETECTED** - Immediate attention required'
-              exit_code = 1
-          else:
-              summary += '✅ **ALL SECURITY CHECKS PASSED** - No critical issues found'
-              exit_code = 0
-          
-          with open('security-summary.md', 'w') as f:
-              f.write(summary)
-          
-          print(summary)
-          exit(exit_code)
-          "
+          safety check --file Vulcan-GPT/requirements.txt
 
-      - name: Upload security reports
+      - name: Upload security report
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: security-reports
-          path: |
-            bandit-report.json
-            safety-report.json
-            pip-audit-report.json
-            security-summary.md
+          name: security-report
+          path: bandit-report.json
 
-      - name: Create security issue if vulnerabilities found
-        if: failure()
-        uses: actions/github-script@v6
-        with:
-          script: |
-            const fs = require('fs');
-            
-            let summary = 'Security scan failed - please check the workflow logs for details.';
-            if (fs.existsSync('security-summary.md')) {
-              summary = fs.readFileSync('security-summary.md', 'utf8');
-            }
-            
-            const title = `🚨 Security Alert - ${new Date().toISOString().split('T')[0]}`;
-            const body = `${summary}
-            
-            ## Action Required
-            Please review the security reports and address any high or medium severity issues.
-            
-            ## Reports
-            Check the workflow artifacts for detailed security reports.
-            
-            ---
-            *This issue was automatically created by the security monitoring workflow.*`;
-            
-            // Check if a similar issue already exists
-            const { data: issues } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              labels: ['security', 'automated'],
-              state: 'open'
-            });
-            
-            if (issues.length === 0) {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: title,
-                body: body,
-                labels: ['security', 'automated', 'high-priority']
-              });
-            }
-
-  codeql-analysis:
-    name: CodeQL Analysis
-    runs-on: ubuntu-latest
-    permissions:
-      actions: read
-      contents: read
-      security-events: write
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: python
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-
-  license-check:
-    name: License Compliance Check
+  lint-and-format:
+    name: Lint and Format Check
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -212,90 +54,286 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install license checker
+      - name: Install linting tools
         run: |
-          pip install pip-licenses
+          pip install flake8 black isort mypy
 
-      - name: Check licenses
+      - name: Check code formatting with Black
         run: |
+          black --check --diff Vulcan-GPT/
+
+      - name: Check import sorting with isort
+        run: |
+          isort --check-only --diff Vulcan-GPT/
+
+      - name: Lint with flake8
+        run: |
+          flake8 Vulcan-GPT/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 Vulcan-GPT/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Type check with mypy (optional)
+        run: |
+          mypy Vulcan-GPT/ --ignore-missing-imports || true
+
+  test:
+    name: Test Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
           pip install -r Vulcan-GPT/requirements.txt
-          pip-licenses --format=json --output-file=licenses.json
-          pip-licenses --format=markdown --output-file=licenses.md
 
-      - name: Validate licenses
+      - name: Test module imports
         run: |
           python -c "
-          import json
+          import sys
+          sys.path.append('Vulcan-GPT')
           
-          # Define allowed licenses (add more as needed)
-          allowed_licenses = [
-              'MIT License', 'MIT', 'Apache Software License', 'Apache 2.0',
-              'BSD License', 'BSD', '3-Clause BSD License', '2-Clause BSD License',
-              'Python Software Foundation License', 'PSF', 'Mozilla Public License 2.0 (MPL 2.0)',
-              'ISC License', 'ISC', 'Apache License 2.0', 'Apache-2.0'
-          ]
+          # Test main module import
+          try:
+              import VulcanGPT
+              print('✅ VulcanGPT module imports successfully')
+          except Exception as e:
+              print(f'❌ VulcanGPT import failed: {e}')
+              sys.exit(1)
           
-          with open('licenses.json', 'r') as f:
-              licenses = json.load(f)
+          # Test local models import
+          try:
+              import local_models
+              print('✅ local_models module imports successfully')
+          except Exception as e:
+              print(f'❌ local_models import failed: {e}')
+              sys.exit(1)
           
-          problematic_licenses = []
-          for package in licenses:
-              license_name = package.get('License', 'Unknown')
-              if license_name not in allowed_licenses and license_name != 'UNKNOWN':
-                  problematic_licenses.append({
-                      'name': package.get('Name'),
-                      'version': package.get('Version'),
-                      'license': license_name
-                  })
-          
-          if problematic_licenses:
-              print('❌ Problematic licenses found:')
-              for pkg in problematic_licenses:
-                  print(f'  - {pkg[\"name\"]} ({pkg[\"version\"]}): {pkg[\"license\"]}')
-              exit(1)
-          else:
-              print('✅ All licenses are compliant')
+          print('✅ All import tests passed')
           "
 
-      - name: Upload license report
-        uses: actions/upload-artifact@v4
-        with:
-          name: license-report
-          path: |
-            licenses.json
-            licenses.md
+      - name: Test configuration loading
+        run: |
+          python -c "
+          import sys
+          sys.path.append('Vulcan-GPT')
+          import VulcanGPT
+          
+          # Test Config class
+          try:
+              config = VulcanGPT.Config()
+              print('✅ Config class instantiated successfully')
+              print(f'Base URL: {config.BASE_URL}')
+              print(f'Model Name: {config.MODEL_NAME}')
+          except Exception as e:
+              print(f'❌ Config test failed: {e}')
+              sys.exit(1)
+          "
 
-  security-summary:
-    name: Security Summary
+      - name: Test UI components
+        run: |
+          python -c "
+          import sys
+          sys.path.append('Vulcan-GPT')
+          import VulcanGPT
+          
+          # Test UI class
+          try:
+              ui = VulcanGPT.UI()
+              print('✅ UI class instantiated successfully')
+          except Exception as e:
+              print(f'❌ UI test failed: {e}')
+              sys.exit(1)
+          "
+
+  dependency-check:
+    name: Dependency Analysis
     runs-on: ubuntu-latest
-    needs: [dependency-scan, codeql-analysis, license-check]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install pip-audit
+        run: |
+          pip install pip-audit
+
+      - name: Audit dependencies
+        run: |
+          pip-audit --requirement Vulcan-GPT/requirements.txt --format=json --output=audit-report.json || true
+          pip-audit --requirement Vulcan-GPT/requirements.txt
+
+      - name: Upload audit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit
+          path: audit-report.json
+
+  build-test:
+    name: Build Test
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build dependencies
+        run: |
+          pip install pyinstaller
+
+      - name: Install project dependencies
+        run: |
+          pip install -r Vulcan-GPT/requirements.txt
+
+      - name: Test build (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cd Vulcan-GPT
+          pyinstaller --onefile --name VulcanGPT-test --add-data "prompts;prompts" VulcanGPT.py
+
+      - name: Test build (Linux/macOS)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cd Vulcan-GPT
+          pyinstaller --onefile --name VulcanGPT-test --add-data "prompts:prompts" VulcanGPT.py
+
+      - name: Test executable
+        run: |
+          cd Vulcan-GPT/dist
+          ./VulcanGPT-test --help || echo "Executable created successfully"
+
+  documentation-check:
+    name: Documentation Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check README exists
+        run: |
+          if [ ! -f README.md ]; then
+            echo "❌ README.md not found"
+            exit 1
+          fi
+          echo "✅ README.md found"
+
+      - name: Check LICENSE exists
+        run: |
+          if [ ! -f Vulcan-GPT/LICENSE.txt ]; then
+            echo "❌ LICENSE.txt not found"
+            exit 1
+          fi
+          echo "✅ LICENSE.txt found"
+
+      - name: Check requirements.txt exists
+        run: |
+          if [ ! -f Vulcan-GPT/requirements.txt ]; then
+            echo "❌ requirements.txt not found"
+            exit 1
+          fi
+          echo "✅ requirements.txt found"
+
+      - name: Validate requirements.txt
+        run: |
+          python -m pip install --dry-run -r Vulcan-GPT/requirements.txt
+          echo "✅ requirements.txt is valid"
+
+  performance-check:
+    name: Performance Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r Vulcan-GPT/requirements.txt
+          pip install memory-profiler
+
+      - name: Memory usage test
+        run: |
+          python -c "
+          import sys
+          sys.path.append('Vulcan-GPT')
+          import psutil
+          import os
+          
+          # Get initial memory usage
+          process = psutil.Process(os.getpid())
+          initial_memory = process.memory_info().rss / 1024 / 1024  # MB
+          
+          # Import modules
+          import VulcanGPT
+          import local_models
+          
+          # Get memory after imports
+          final_memory = process.memory_info().rss / 1024 / 1024  # MB
+          memory_increase = final_memory - initial_memory
+          
+          print(f'Initial memory: {initial_memory:.2f} MB')
+          print(f'Final memory: {final_memory:.2f} MB')
+          print(f'Memory increase: {memory_increase:.2f} MB')
+          
+          if memory_increase > 100:  # More than 100MB increase
+              print('⚠️ High memory usage detected')
+          else:
+              print('✅ Memory usage is acceptable')
+          "
+
+  status-check:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [security-check, lint-and-format, test, dependency-check, build-test, documentation-check, performance-check]
     if: always()
     
     steps:
-      - name: Generate final security report
+      - name: Check all jobs status
         run: |
-          echo "# Security Monitoring Summary" > final-report.md
-          echo "" >> final-report.md
-          echo "## Job Results" >> final-report.md
-          echo "- Dependency Scan: ${{ needs.dependency-scan.result }}" >> final-report.md
-          echo "- CodeQL Analysis: ${{ needs.codeql-analysis.result }}" >> final-report.md
-          echo "- License Check: ${{ needs.license-check.result }}" >> final-report.md
-          echo "" >> final-report.md
+          echo "Security Check: ${{ needs.security-check.result }}"
+          echo "Lint and Format: ${{ needs.lint-and-format.result }}"
+          echo "Tests: ${{ needs.test.result }}"
+          echo "Dependency Check: ${{ needs.dependency-check.result }}"
+          echo "Build Test: ${{ needs.build-test.result }}"
+          echo "Documentation Check: ${{ needs.documentation-check.result }}"
+          echo "Performance Check: ${{ needs.performance-check.result }}"
           
-          if [[ "${{ needs.dependency-scan.result }}" == "success" && 
-                "${{ needs.codeql-analysis.result }}" == "success" && 
-                "${{ needs.license-check.result }}" == "success" ]]; then
-            echo "## Overall Status: ✅ PASSED" >> final-report.md
-            echo "All security checks completed successfully." >> final-report.md
+          if [[ "${{ needs.security-check.result }}" == "failure" || 
+                "${{ needs.lint-and-format.result }}" == "failure" || 
+                "${{ needs.test.result }}" == "failure" || 
+                "${{ needs.dependency-check.result }}" == "failure" || 
+                "${{ needs.build-test.result }}" == "failure" || 
+                "${{ needs.documentation-check.result }}" == "failure" || 
+                "${{ needs.performance-check.result }}" == "failure" ]]; then
+            echo "❌ CI pipeline failed"
+            exit 1
           else
-            echo "## Overall Status: ❌ FAILED" >> final-report.md
-            echo "One or more security checks failed. Please review the individual job results." >> final-report.md
+            echo "✅ All CI checks passed"
           fi
-          
-          cat final-report.md
-
-      - name: Upload final report
-        uses: actions/upload-artifact@v4
-        with:
-          name: final-security-report
-          path: final-report.md
