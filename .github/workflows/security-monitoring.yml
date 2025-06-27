@@ -232,7 +232,10 @@ jobs:
               'MIT License', 'MIT', 'Apache Software License', 'Apache 2.0',
               'BSD License', 'BSD', '3-Clause BSD License', '2-Clause BSD License',
               'Python Software Foundation License', 'PSF', 'Mozilla Public License 2.0 (MPL 2.0)',
-              'ISC License', 'ISC', 'Apache License 2.0', 'Apache-2.0'
+              'ISC License', 'ISC', 'Apache License 2.0', 'Apache-2.0',
+              'Apache-2.0 OR BSD-3-Clause', 'The Unlicense (Unlicense)',
+              'Apache Software License; BSD License', 'Apache Software License; MIT License',
+              'MIT License; Mozilla Public License 2.0 (MPL 2.0)'
           ]
           
           with open('licenses.json', 'r') as f:
