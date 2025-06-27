@@ -1,0 +1,301 @@
+name: Security Monitoring
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'Vulcan-GPT/requirements.txt'
+      - '.github/workflows/security-monitoring.yml'
+
+env:
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  dependency-scan:
+    name: Dependency Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install security tools
+        run: |
+          pip install safety pip-audit bandit
+
+      - name: Check for known vulnerabilities with Safety
+        run: |
+          safety check --file Vulcan-GPT/requirements.txt --json --output safety-report.json || true
+          safety check --file Vulcan-GPT/requirements.txt
+
+      - name: Audit dependencies with pip-audit
+        run: |
+          pip-audit --requirement Vulcan-GPT/requirements.txt --format=json --output=pip-audit-report.json || true
+          pip-audit --requirement Vulcan-GPT/requirements.txt
+
+      - name: Run Bandit security scan
+        run: |
+          bandit -r Vulcan-GPT/ -f json -o bandit-report.json || true
+          bandit -r Vulcan-GPT/ -f txt
+
+      - name: Generate security summary
+        run: |
+          python -c "
+          import json
+          import os
+          from datetime import datetime
+          
+          # Read reports
+          reports = {}
+          
+          # Bandit report
+          if os.path.exists('bandit-report.json'):
+              with open('bandit-report.json', 'r') as f:
+                  bandit_data = json.load(f)
+                  reports['bandit'] = {
+                      'high_issues': bandit_data['metrics']['_totals']['SEVERITY.HIGH'],
+                      'medium_issues': bandit_data['metrics']['_totals']['SEVERITY.MEDIUM'],
+                      'low_issues': bandit_data['metrics']['_totals']['SEVERITY.LOW'],
+                      'total_issues': len(bandit_data['results'])
+                  }
+          
+          # Safety report
+          if os.path.exists('safety-report.json'):
+              with open('safety-report.json', 'r') as f:
+                  try:
+                      safety_data = json.load(f)
+                      reports['safety'] = {
+                          'vulnerabilities': len(safety_data) if isinstance(safety_data, list) else 0
+                      }
+                  except:
+                      reports['safety'] = {'vulnerabilities': 0}
+          
+          # pip-audit report
+          if os.path.exists('pip-audit-report.json'):
+              with open('pip-audit-report.json', 'r') as f:
+                  try:
+                      audit_data = json.load(f)
+                      reports['pip_audit'] = {
+                          'vulnerabilities': len(audit_data.get('vulnerabilities', []))
+                      }
+                  except:
+                      reports['pip_audit'] = {'vulnerabilities': 0}
+          
+          # Generate summary
+          summary = f'''# Security Scan Summary - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+          
+          ## Bandit Static Analysis
+          - High Severity Issues: {reports.get('bandit', {}).get('high_issues', 'N/A')}
+          - Medium Severity Issues: {reports.get('bandit', {}).get('medium_issues', 'N/A')}
+          - Low Severity Issues: {reports.get('bandit', {}).get('low_issues', 'N/A')}
+          - Total Issues: {reports.get('bandit', {}).get('total_issues', 'N/A')}
+          
+          ## Dependency Vulnerabilities
+          - Safety Check: {reports.get('safety', {}).get('vulnerabilities', 'N/A')} vulnerabilities
+          - Pip-Audit: {reports.get('pip_audit', {}).get('vulnerabilities', 'N/A')} vulnerabilities
+          
+          ## Status
+          '''
+          
+          # Determine overall status
+          high_issues = reports.get('bandit', {}).get('high_issues', 0)
+          medium_issues = reports.get('bandit', {}).get('medium_issues', 0)
+          safety_vulns = reports.get('safety', {}).get('vulnerabilities', 0)
+          audit_vulns = reports.get('pip_audit', {}).get('vulnerabilities', 0)
+          
+          if high_issues > 0 or medium_issues > 0 or safety_vulns > 0 or audit_vulns > 0:
+              summary += '❌ **SECURITY ISSUES DETECTED** - Immediate attention required'
+              exit_code = 1
+          else:
+              summary += '✅ **ALL SECURITY CHECKS PASSED** - No critical issues found'
+              exit_code = 0
+          
+          with open('security-summary.md', 'w') as f:
+              f.write(summary)
+          
+          print(summary)
+          exit(exit_code)
+          "
+
+      - name: Upload security reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: security-reports
+          path: |
+            bandit-report.json
+            safety-report.json
+            pip-audit-report.json
+            security-summary.md
+
+      - name: Create security issue if vulnerabilities found
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            
+            let summary = 'Security scan failed - please check the workflow logs for details.';
+            if (fs.existsSync('security-summary.md')) {
+              summary = fs.readFileSync('security-summary.md', 'utf8');
+            }
+            
+            const title = `🚨 Security Alert - ${new Date().toISOString().split('T')[0]}`;
+            const body = `${summary}
+            
+            ## Action Required
+            Please review the security reports and address any high or medium severity issues.
+            
+            ## Reports
+            Check the workflow artifacts for detailed security reports.
+            
+            ---
+            *This issue was automatically created by the security monitoring workflow.*`;
+            
+            // Check if a similar issue already exists
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: ['security', 'automated'],
+              state: 'open'
+            });
+            
+            if (issues.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['security', 'automated', 'high-priority']
+              });
+            }
+
+  codeql-analysis:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v2
+        with:
+          languages: python
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v2
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v2
+
+  license-check:
+    name: License Compliance Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install license checker
+        run: |
+          pip install pip-licenses
+
+      - name: Check licenses
+        run: |
+          pip install -r Vulcan-GPT/requirements.txt
+          pip-licenses --format=json --output-file=licenses.json
+          pip-licenses --format=markdown --output-file=licenses.md
+
+      - name: Validate licenses
+        run: |
+          python -c "
+          import json
+          
+          # Define allowed licenses (add more as needed)
+          allowed_licenses = [
+              'MIT License', 'MIT', 'Apache Software License', 'Apache 2.0',
+              'BSD License', 'BSD', '3-Clause BSD License', '2-Clause BSD License',
+              'Python Software Foundation License', 'PSF', 'Mozilla Public License 2.0 (MPL 2.0)',
+              'ISC License', 'ISC', 'Apache License 2.0', 'Apache-2.0'
+          ]
+          
+          with open('licenses.json', 'r') as f:
+              licenses = json.load(f)
+          
+          problematic_licenses = []
+          for package in licenses:
+              license_name = package.get('License', 'Unknown')
+              if license_name not in allowed_licenses and license_name != 'UNKNOWN':
+                  problematic_licenses.append({
+                      'name': package.get('Name'),
+                      'version': package.get('Version'),
+                      'license': license_name
+                  })
+          
+          if problematic_licenses:
+              print('❌ Problematic licenses found:')
+              for pkg in problematic_licenses:
+                  print(f'  - {pkg[\"name\"]} ({pkg[\"version\"]}): {pkg[\"license\"]}')
+              exit(1)
+          else:
+              print('✅ All licenses are compliant')
+          "
+
+      - name: Upload license report
+        uses: actions/upload-artifact@v3
+        with:
+          name: license-report
+          path: |
+            licenses.json
+            licenses.md
+
+  security-summary:
+    name: Security Summary
+    runs-on: ubuntu-latest
+    needs: [dependency-scan, codeql-analysis, license-check]
+    if: always()
+    
+    steps:
+      - name: Generate final security report
+        run: |
+          echo "# Security Monitoring Summary" > final-report.md
+          echo "" >> final-report.md
+          echo "## Job Results" >> final-report.md
+          echo "- Dependency Scan: ${{ needs.dependency-scan.result }}" >> final-report.md
+          echo "- CodeQL Analysis: ${{ needs.codeql-analysis.result }}" >> final-report.md
+          echo "- License Check: ${{ needs.license-check.result }}" >> final-report.md
+          echo "" >> final-report.md
+          
+          if [[ "${{ needs.dependency-scan.result }}" == "success" && 
+                "${{ needs.codeql-analysis.result }}" == "success" && 
+                "${{ needs.license-check.result }}" == "success" ]]; then
+            echo "## Overall Status: ✅ PASSED" >> final-report.md
+            echo "All security checks completed successfully." >> final-report.md
+          else
+            echo "## Overall Status: ❌ FAILED" >> final-report.md
+            echo "One or more security checks failed. Please review the individual job results." >> final-report.md
+          fi
+          
+          cat final-report.md
+
+      - name: Upload final report
+        uses: actions/upload-artifact@v3
+        with:
+          name: final-security-report
+          path: final-report.md
