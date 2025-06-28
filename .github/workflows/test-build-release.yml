@@ -121,6 +121,7 @@ jobs:
           "
 
       - name: Validate project structure
+        shell: bash
         run: |
           echo "Validating project structure..."
           
@@ -189,6 +190,7 @@ jobs:
 
       - name: Test build (Windows)
         if: matrix.os == 'windows-latest'
+        shell: bash
         env:
           PYTHONIOENCODING: utf-8
         run: |
@@ -260,6 +262,7 @@ jobs:
 
       - name: Build executable (Windows)
         if: matrix.os == 'windows-latest'
+        shell: bash
         env:
           PYTHONIOENCODING: utf-8
         run: |
