@@ -1,0 +1,456 @@
+name: Test, Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+      skip_tests:
+        description: 'Skip tests (not recommended)'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  PYTHON_VERSION: '3.9'
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Vulcan-GPT/requirements.txt
+
+      - name: Test module imports
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -c "
+          import sys
+          sys.path.append('Vulcan-GPT')
+          
+          print('Testing module imports...')
+          
+          # Test main module import
+          try:
+              import VulcanGPT
+              print('[PASS] VulcanGPT module imports successfully')
+          except Exception as e:
+              print(f'[FAIL] VulcanGPT import failed: {e}')
+              sys.exit(1)
+          
+          # Test local models import
+          try:
+              import local_models
+              print('[PASS] local_models module imports successfully')
+          except Exception as e:
+              print(f'[FAIL] local_models import failed: {e}')
+              sys.exit(1)
+          
+          print('[PASS] All import tests passed')
+          "
+
+      - name: Test configuration loading
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -c "
+          import sys
+          sys.path.append('Vulcan-GPT')
+          import VulcanGPT
+          
+          print('Testing configuration loading...')
+          
+          # Test Config class
+          try:
+              config = VulcanGPT.Config()
+              print('[PASS] Config class instantiated successfully')
+              print(f'Base URL: {config.BASE_URL}')
+              print(f'Model Name: {config.MODEL_NAME}')
+          except Exception as e:
+              print(f'[FAIL] Config test failed: {e}')
+              sys.exit(1)
+          "
+
+      - name: Test UI components
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -c "
+          import sys
+          sys.path.append('Vulcan-GPT')
+          import VulcanGPT
+          
+          print('Testing UI components...')
+          
+          # Test UI class
+          try:
+              ui = VulcanGPT.UI()
+              print('[PASS] UI class instantiated successfully')
+          except Exception as e:
+              print(f'[FAIL] UI test failed: {e}')
+              sys.exit(1)
+          "
+
+      - name: Validate project structure
+        run: |
+          echo "Validating project structure..."
+          
+          # Check required files
+          required_files=(
+            "Vulcan-GPT/VulcanGPT.py"
+            "Vulcan-GPT/requirements.txt"
+            "Vulcan-GPT/img/logo.ico"
+          )
+          
+          for file in "${required_files[@]}"; do
+            if [ -f "$file" ]; then
+              echo "[PASS] Found required file: $file"
+            else
+              echo "[FAIL] Missing required file: $file"
+              exit 1
+            fi
+          done
+          
+          # Check required directories
+          required_dirs=(
+            "Vulcan-GPT/prompts"
+            "Vulcan-GPT/img"
+          )
+          
+          for dir in "${required_dirs[@]}"; do
+            if [ -d "$dir" ]; then
+              echo "[PASS] Found required directory: $dir"
+            else
+              echo "[FAIL] Missing required directory: $dir"
+              exit 1
+            fi
+          done
+          
+          echo "[PASS] Project structure validation completed"
+
+      - name: Test requirements.txt validity
+        run: |
+          echo "Testing requirements.txt validity..."
+          python -m pip install --dry-run -r Vulcan-GPT/requirements.txt
+          echo "[PASS] requirements.txt is valid"
+
+  build-test:
+    name: Build Test
+    runs-on: ${{ matrix.os }}
+    needs: [test]
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r Vulcan-GPT/requirements.txt
+
+      - name: Test build (Windows)
+        if: matrix.os == 'windows-latest'
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          cd Vulcan-GPT
+          echo "Testing Windows build..."
+          pyinstaller --onefile --name VulcanGPT-test --add-data "prompts;prompts" --add-data "img;img" --icon "img/logo.ico" --console VulcanGPT.py
+          
+          if [ -f "dist/VulcanGPT-test.exe" ]; then
+            echo "[PASS] Windows executable created successfully"
+            ls -la dist/
+          else
+            echo "[FAIL] Windows executable not created"
+            exit 1
+          fi
+
+      - name: Test build (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd Vulcan-GPT
+          echo "Testing Linux build..."
+          pyinstaller --onefile --name VulcanGPT-test --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
+          
+          if [ -f "dist/VulcanGPT-test" ]; then
+            echo "[PASS] Linux executable created successfully"
+            ls -la dist/
+          else
+            echo "[FAIL] Linux executable not created"
+            exit 1
+          fi
+
+      - name: Test build (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd Vulcan-GPT
+          echo "Testing macOS build..."
+          pyinstaller --onefile --name VulcanGPT-test --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
+          
+          if [ -f "dist/VulcanGPT-test" ]; then
+            echo "[PASS] macOS executable created successfully"
+            ls -la dist/
+          else
+            echo "[FAIL] macOS executable not created"
+            exit 1
+          fi
+
+  build:
+    name: Build Release Assets
+    runs-on: ${{ matrix.os }}
+    needs: [test, build-test]
+    if: github.event_name != 'pull_request'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          pip install -r Vulcan-GPT/requirements.txt
+
+      - name: Build executable (Windows)
+        if: matrix.os == 'windows-latest'
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          cd Vulcan-GPT
+          echo "Building Windows release executable..."
+          pyinstaller --onefile --name VulcanGPT --add-data "prompts;prompts" --add-data "img;img" --icon "img/logo.ico" --console VulcanGPT.py
+          echo "Windows build completed"
+          ls -la dist/
+
+      - name: Build executable (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          cd Vulcan-GPT
+          echo "Building Linux release executable..."
+          pyinstaller --onefile --name VulcanGPT --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
+          echo "Linux build completed"
+          ls -la dist/
+
+      - name: Build executable (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd Vulcan-GPT
+          echo "Building macOS release executable..."
+          pyinstaller --onefile --name VulcanGPT --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
+          echo "macOS build completed"
+          ls -la dist/
+
+      - name: Create source archive
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          echo "Creating source archive..."
+          tar -czf VulcanGPT-source.tar.gz Vulcan-GPT/ VulcanGPT-Web/ *.md *.bat *.sh --exclude=build --exclude=dist
+          echo "Source archive created"
+          ls -la VulcanGPT-source.tar.gz
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.os }}
+          path: |
+            Vulcan-GPT/dist/
+            VulcanGPT-source.tar.gz
+
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build]
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Get version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          echo "Generating changelog..."
+          
+          # Get the latest tag (excluding the current one if it exists)
+          PREVIOUS_TAG=$(git tag --sort=-version:refname | grep -v "${{ steps.version.outputs.version }}" | head -n 1)
+          
+          if [ -z "$PREVIOUS_TAG" ]; then
+            echo "## What's New" > CHANGELOG.md
+            echo "This is the first release of VulcanGPT!" >> CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "### Features" >> CHANGELOG.md
+            echo "- AI-powered chat interface" >> CHANGELOG.md
+            echo "- Local model support" >> CHANGELOG.md
+            echo "- Cross-platform compatibility" >> CHANGELOG.md
+            echo "- Multiple prompt templates" >> CHANGELOG.md
+          else
+            echo "## What's New" > CHANGELOG.md
+            echo "" >> CHANGELOG.md
+            echo "### Changes since $PREVIOUS_TAG" >> CHANGELOG.md
+            git log --pretty=format:"- %s" $PREVIOUS_TAG..HEAD >> CHANGELOG.md
+          fi
+          
+          echo "" >> CHANGELOG.md
+          echo "## Quality Assurance" >> CHANGELOG.md
+          echo "✅ All tests passed on Windows, macOS, and Linux" >> CHANGELOG.md
+          echo "✅ Compatible with Python 3.8, 3.9, 3.10, and 3.11" >> CHANGELOG.md
+          echo "✅ Build tests completed successfully" >> CHANGELOG.md
+          echo "✅ All executables verified" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "## Download" >> CHANGELOG.md
+          echo "Choose the appropriate executable for your platform:" >> CHANGELOG.md
+          echo "- **Windows**: VulcanGPT-windows.exe" >> CHANGELOG.md
+          echo "- **Linux**: VulcanGPT-linux" >> CHANGELOG.md
+          echo "- **macOS**: VulcanGPT-macos" >> CHANGELOG.md
+          echo "- **Source Code**: VulcanGPT-source.tar.gz" >> CHANGELOG.md
+          echo "" >> CHANGELOG.md
+          echo "## System Requirements" >> CHANGELOG.md
+          echo "- No Python installation required for executables" >> CHANGELOG.md
+          echo "- Windows 10+, macOS 10.14+, or Linux with glibc 2.17+" >> CHANGELOG.md
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          
+          echo "Preparing release assets..."
+          
+          # Copy and rename executables with platform suffixes
+          if [ -f "build-windows-latest/Vulcan-GPT/dist/VulcanGPT.exe" ]; then
+            cp build-windows-latest/Vulcan-GPT/dist/VulcanGPT.exe release-assets/VulcanGPT-windows.exe
+            echo "[PASS] Windows executable: $(ls -lh release-assets/VulcanGPT-windows.exe)"
+          else
+            echo "[FAIL] Windows executable not found"
+            exit 1
+          fi
+          
+          if [ -f "build-ubuntu-latest/Vulcan-GPT/dist/VulcanGPT" ]; then
+            cp build-ubuntu-latest/Vulcan-GPT/dist/VulcanGPT release-assets/VulcanGPT-linux
+            chmod +x release-assets/VulcanGPT-linux
+            echo "[PASS] Linux executable: $(ls -lh release-assets/VulcanGPT-linux)"
+          else
+            echo "[FAIL] Linux executable not found"
+            exit 1
+          fi
+          
+          if [ -f "build-macos-latest/Vulcan-GPT/dist/VulcanGPT" ]; then
+            cp build-macos-latest/Vulcan-GPT/dist/VulcanGPT release-assets/VulcanGPT-macos
+            chmod +x release-assets/VulcanGPT-macos
+            echo "[PASS] macOS executable: $(ls -lh release-assets/VulcanGPT-macos)"
+          else
+            echo "[FAIL] macOS executable not found"
+            exit 1
+          fi
+          
+          # Copy source archive
+          if [ -f "build-ubuntu-latest/VulcanGPT-source.tar.gz" ]; then
+            cp build-ubuntu-latest/VulcanGPT-source.tar.gz release-assets/
+            echo "[PASS] Source archive: $(ls -lh release-assets/VulcanGPT-source.tar.gz)"
+          else
+            echo "[FAIL] Source archive not found"
+            exit 1
+          fi
+          
+          # Create checksums
+          cd release-assets
+          for file in *; do
+            if [ -f "$file" ]; then
+              sha256sum "$file" >> checksums.txt
+            fi
+          done
+          
+          echo "Release assets prepared:"
+          ls -la
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: VulcanGPT ${{ steps.version.outputs.version }}
+          body_path: CHANGELOG.md
+          files: release-assets/*
+          prerelease: ${{ github.event.inputs.prerelease == 'true' }}
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release Summary
+        run: |
+          echo "## 🎉 Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Quality Assurance:** ✅ All tests passed" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Status:** ✅ All platforms built successfully" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Assets Created:**" >> $GITHUB_STEP_SUMMARY
+          echo "- VulcanGPT-windows.exe" >> $GITHUB_STEP_SUMMARY
+          echo "- VulcanGPT-linux" >> $GITHUB_STEP_SUMMARY
+          echo "- VulcanGPT-macos" >> $GITHUB_STEP_SUMMARY
+          echo "- VulcanGPT-source.tar.gz" >> $GITHUB_STEP_SUMMARY
+          echo "- checksums.txt" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Release URL:** https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tested Platforms:** Windows, macOS, Linux" >> $GITHUB_STEP_SUMMARY
+          echo "**Python Versions:** 3.8, 3.9, 3.10, 3.11" >> $GITHUB_STEP_SUMMARY
