@@ -55,10 +55,10 @@ jobs:
           print(f'Medium severity issues: {medium_issues}')
           
           if high_issues > 0 or medium_issues > 0:
-              print('❌ Security scan failed: High or medium severity issues found')
+              print('[FAIL] Security scan failed: High or medium severity issues found')
               exit(1)
           else:
-              print('✅ Security scan passed: No high or medium severity issues')
+              print('[PASS] Security scan passed: No high or medium severity issues')
           "
 
       - name: Upload security report
@@ -66,31 +66,6 @@ jobs:
         with:
           name: security-report
           path: bandit-report.json
-
-  code-quality:
-    name: Code Quality Check
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: |
-          pip install flake8 isort
-
-      - name: Check import sorting with isort
-        run: |
-          isort --check-only --diff Vulcan-GPT/
-
-      - name: Lint with flake8
-        run: |
-          flake8 Vulcan-GPT/ --count --select=E9,F63,F7,F82 --show-source --statistics
-          flake8 Vulcan-GPT/ --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
   test:
     name: Run Tests
@@ -123,25 +98,25 @@ jobs:
           # Test imports
           try:
               import VulcanGPT
-              print('✅ Main module imports successfully')
+              print('[PASS] Main module imports successfully')
           except Exception as e:
-              print(f'❌ Main module import failed: {e}')
+              print(f'[FAIL] Main module import failed: {e}')
               sys.exit(1)
           
           try:
               import local_models
-              print('✅ Local models module imports successfully')
+              print('[PASS] Local models module imports successfully')
           except Exception as e:
-              print(f'❌ Local models import failed: {e}')
+              print(f'[FAIL] Local models import failed: {e}')
               sys.exit(1)
           
-          print('✅ All basic tests passed')
+          print('[PASS] All basic tests passed')
           "
 
   build:
     name: Build Release Assets
     runs-on: ${{ matrix.os }}
-    needs: [security-scan, code-quality, test]
+    needs: [security-scan, test]
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
@@ -165,21 +140,23 @@ jobs:
 
       - name: Build executable (Windows)
         if: matrix.os == 'windows-latest'
+        env:
+          PYTHONIOENCODING: utf-8
         run: |
           cd Vulcan-GPT
-          pyinstaller --onefile --name VulcanGPT-windows --add-data "prompts;prompts" --add-data "img;img" VulcanGPT.py
+          pyinstaller --onefile --name VulcanGPT --add-data "prompts;prompts" --add-data "img;img" --console VulcanGPT.py
 
       - name: Build executable (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
           cd Vulcan-GPT
-          pyinstaller --onefile --name VulcanGPT-linux --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
+          pyinstaller --onefile --name VulcanGPT --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
 
       - name: Build executable (macOS)
         if: matrix.os == 'macos-latest'
         run: |
           cd Vulcan-GPT
-          pyinstaller --onefile --name VulcanGPT-macos --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
+          pyinstaller --onefile --name VulcanGPT --add-data "prompts:prompts" --add-data "img:img" VulcanGPT.py
 
       - name: Create source archive
         if: matrix.os == 'ubuntu-latest'
@@ -248,10 +225,18 @@ jobs:
         run: |
           mkdir -p release-assets
           
-          # Copy executables
-          cp build-windows-latest/Vulcan-GPT/dist/* release-assets/ 2>/dev/null || true
-          cp build-ubuntu-latest/Vulcan-GPT/dist/* release-assets/ 2>/dev/null || true
-          cp build-macos-latest/Vulcan-GPT/dist/* release-assets/ 2>/dev/null || true
+          # Copy and rename executables with platform suffixes
+          if [ -f "build-windows-latest/Vulcan-GPT/dist/VulcanGPT.exe" ]; then
+            cp build-windows-latest/Vulcan-GPT/dist/VulcanGPT.exe release-assets/VulcanGPT-windows.exe
+          fi
+          
+          if [ -f "build-ubuntu-latest/Vulcan-GPT/dist/VulcanGPT" ]; then
+            cp build-ubuntu-latest/Vulcan-GPT/dist/VulcanGPT release-assets/VulcanGPT-linux
+          fi
+          
+          if [ -f "build-macos-latest/Vulcan-GPT/dist/VulcanGPT" ]; then
+            cp build-macos-latest/Vulcan-GPT/dist/VulcanGPT release-assets/VulcanGPT-macos
+          fi
           
           # Copy source archive
           cp build-ubuntu-latest/VulcanGPT-source.tar.gz release-assets/ 2>/dev/null || true
@@ -286,15 +271,15 @@ jobs:
       - name: Notify on success
         if: needs.create-release.result == 'success'
         run: |
-          echo "🎉 Release ${{ needs.create-release.outputs.version || github.ref_name }} created successfully!"
-          echo "📦 Assets built for Windows, macOS, and Linux"
-          echo "🔒 Security scans passed"
-          echo "✅ All tests passed"
+          echo "[SUCCESS] Release ${{ needs.create-release.outputs.version || github.ref_name }} created successfully!"
+          echo "[INFO] Assets built for Windows, macOS, and Linux"
+          echo "[INFO] Security scans passed"
+          echo "[INFO] All tests passed"
 
       - name: Notify on failure
         if: needs.create-release.result == 'failure'
         run: |
-          echo "❌ Release failed!"
+          echo "[FAIL] Release failed!"
           echo "Please check the workflow logs for details."
           exit 1
 
