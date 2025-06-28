@@ -292,10 +292,36 @@ jobs:
 
       - name: Create source archive
         if: matrix.os == 'ubuntu-latest'
+        shell: bash
         run: |
           echo "Creating source archive..."
-          tar -czf VulcanGPT-source.tar.gz Vulcan-GPT/ VulcanGPT-Web/ *.md *.bat *.sh --exclude=build --exclude=dist
-          echo "Source archive created"
+          
+          # Create list of files/directories to include
+          archive_items=()
+          
+          # Always include main VulcanGPT directory
+          if [ -d "Vulcan-GPT" ]; then
+            archive_items+=("Vulcan-GPT/")
+            echo "Including: Vulcan-GPT/"
+          else
+            echo "ERROR: Vulcan-GPT directory not found!"
+            exit 1
+          fi
+          
+          # Include documentation and script files
+          for file in *.md *.bat *.sh *.py; do
+            if [ -f "$file" ]; then
+              archive_items+=("$file")
+              echo "Including: $file"
+            fi
+          done
+          
+          # Create archive with proper exclude syntax (excluding VulcanGPT-Web as it's a separate project)
+          tar --exclude='*/build' --exclude='*/dist' --exclude='*/__pycache__' --exclude='*.pyc' \
+              --exclude='VulcanGPT-Web' \
+              -czf VulcanGPT-source.tar.gz "${archive_items[@]}"
+          
+          echo "Source archive created successfully"
           ls -la VulcanGPT-source.tar.gz
 
       - name: Upload build artifacts
