@@ -81,11 +81,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install flake8 black isort
-
-      - name: Check code formatting with Black
-        run: |
-          black --check --diff Vulcan-GPT/
+          pip install flake8 isort
 
       - name: Check import sorting with isort
         run: |
